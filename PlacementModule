@@ -1,0 +1,168 @@
+local isServer = game:GetService("RunService"):IsServer()
+
+local furniture = game:GetService("ReplicatedStorage"):WaitForChild("Furniture")
+
+local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
+local initPlacement = remotes:WaitForChild("InitPlacement")
+local invokePlacement = remotes:WaitForChild("InvokePlacement")
+local dsPlacement = remotes:WaitForChild("DSPlacement")
+
+local worldBoundingBox = require(game:GetService("ReplicatedStorage"):WaitForChild("AABB")).worldBoundingBox
+
+--
+
+local Placement = {}
+Placement.__index = Placement
+
+-- constructor
+
+function Placement.new(canvasPart, canvasObjects)
+	local self = setmetatable({}, Placement)
+
+	self.CanvasPart = canvasPart
+	
+	if (isServer) then
+		self.CanvasObjects = canvasObjects or Instance.new("Folder")
+		self.CanvasObjects.Name = "CanvasObjects"
+		self.CanvasObjects.Parent = canvasObjects and canvasObjects.Parent or canvasPart 
+	else
+		self.CanvasObjects = initPlacement:InvokeServer(canvasPart)
+	end
+	
+	self.Surface = Enum.NormalId.Top
+	self.GridUnit = 1
+
+	return self
+end
+
+function Placement.fromSerialization(canvasPart, data)
+	local self = Placement.new(canvasPart)
+	local canvasCF = canvasPart.CFrame
+	data = data or {}
+	
+	for cf, name in pairs(data) do
+		local model = furniture:FindFirstChild(name)
+		if (model) then
+			local components = {}
+			for num in string.gmatch(cf, "[^%s,]+") do
+				components[#components+1] = tonumber(num)
+			end
+			
+			self:Place(model, canvasCF * CFrame.new(unpack(components)), false)
+		end
+	end
+	
+	return self
+end
+
+-- methods
+
+function Placement:CalcCanvas()
+	local canvasSize = self.CanvasPart.Size;
+
+	local up = Vector3.new(0, 1, 0)
+	local back = -Vector3.FromNormalId(self.Surface)
+	
+	local dot = back:Dot(Vector3.new(0, 1, 0))
+	local axis = (math.abs(dot) == 1) and Vector3.new(-dot, 0, 0) or up
+	
+	local right = CFrame.fromAxisAngle(axis, math.pi/2) * back
+	local top = back:Cross(right).unit
+
+	local cf = self.CanvasPart.CFrame * CFrame.fromMatrix(-back*canvasSize/2, right, top, back)
+	local size = Vector2.new((canvasSize * right).magnitude, (canvasSize * top).magnitude)
+
+	return cf, size
+end
+
+function Placement:CalcPlacementCFrame(model, position, rotation)
+	local cf, size = self:CalcCanvas()
+	local modelSize = worldBoundingBox(CFrame.Angles(0, rotation, 0), model.PrimaryPart.Size)
+
+	local lpos = cf:pointToObjectSpace(position);
+	local size2 = (size - Vector2.new(modelSize.x, modelSize.z))/2
+	local x = math.clamp(lpos.x, -size2.x, size2.x);
+	local y = math.clamp(lpos.y, -size2.y, size2.y);
+	
+	local g = self.GridUnit
+	if (g > 0) then
+		x = math.sign(x)*((math.abs(x) - math.abs(x) % g) + (size2.x % g))
+		y = math.sign(y)*((math.abs(y) - math.abs(y) % g) + (size2.y % g))
+	end
+	
+	return cf * CFrame.new(x, y, -modelSize.y/2) * CFrame.Angles(-math.pi/2, rotation, 0)
+end
+
+function Placement:isColliding(model)
+	local isColliding = false
+
+	local touch = model.PrimaryPart.Touched:Connect(function() end)
+	local touching = model.PrimaryPart:GetTouchingParts()
+	
+	for i = 1, #touching do
+		if (not touching[i]:IsDescendantOf(model)) then
+			isColliding = true
+			model.PrimaryPart.Transparency = 0.6
+			wait(0.2)
+			model.PrimaryPart.Transparency = 1
+			break
+		end
+	end
+
+	touch:Disconnect()
+	return isColliding
+end
+
+function Placement:Place(model, cf, isColliding)
+	if (not isColliding and isServer) then
+		model.PrimaryPart.Transparency = 1
+		local clone = model:Clone()
+		clone:SetPrimaryPartCFrame(cf)
+		clone.Parent = self.CanvasObjects
+		for _, p in pairs(clone:GetDescendants()) do
+			if (not (p:IsA("Weld") or p:IsA("Model") or p:IsA("Decal") or p.Name == "GridPart")) then
+				p.CanCollide = true;
+			end	 
+		end
+	end
+
+	if (not isServer) then
+		invokePlacement:FireServer("Place", model, cf, isColliding)
+	end
+end
+
+function Placement:Serialize()
+	local serial = {}
+	
+	local cfi = self.CanvasPart.CFrame:inverse()
+	local children = self.CanvasObjects:GetChildren()
+	
+	for i = 1, #children do
+		serial[tostring(cfi * children[i].PrimaryPart.CFrame)] = children[i].Name 
+	end
+	
+	return serial
+end
+
+function Placement:Save()
+	local success = dsPlacement:InvokeServer(true, true)
+	if (success) then
+		print("Saved")
+	end
+end
+
+function Placement:Clear()
+	self.CanvasObjects:ClearAllChildren()
+	
+	if (not isServer) then
+		invokePlacement:FireServer("Clear")
+		local success = dsPlacement:InvokeServer(true, false)
+		if (success) then
+			print("Cleared")
+		end
+	end
+end
+
+--
+
+return Placement

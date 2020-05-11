@@ -1,0 +1,110 @@
+--local canvas = game.Workspace:WaitForChild("ExampleCanvas")
+local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
+local furniture = game:GetService("ReplicatedStorage"):WaitForChild("Furniture")
+local pieces = furniture:GetChildren()
+
+local GRID_UNIT = 2
+
+local placementClass = require(game:GetService("ReplicatedStorage"):WaitForChild("Placement"))
+local multiPlacementClass = require(game:GetService("ReplicatedStorage"):WaitForChild("MultiPlacement"))
+
+local canvases = game.Workspace.Canvases
+local canvasObjects = game.Workspace.CanvasObjects
+
+local placements = {}
+local indexLookup = {}
+for k, canvas in next, canvases:GetChildren() do
+	indexLookup[canvas] = k
+	placements[k] = placementClass.new(canvas)
+	placements[k].GridUnit = GRID_UNIT
+end
+
+local multiPlace = multiPlacementClass.new(placements)
+
+local mouse = game.Players.LocalPlayer:GetMouse()
+
+-- change the mouse icon here
+mouse.Icon = "rbxassetid://"..417446600;
+mouse.TargetFilter = canvasObjects
+
+local pivotPoint = CFrame.new()
+local isRotating = false
+local rotation = 0
+local modelCount = 0
+local model = nil
+
+local placement = placements[1]
+
+local function onSwitch(actionName, userInputState, input)
+	if (userInputState == Enum.UserInputState.Begin) then
+		if (model) then
+			model:Destroy()
+		end
+		modelCount = modelCount + 1 > #pieces and 1 or modelCount + 1
+		model = pieces[modelCount]:Clone()
+		model.Parent = canvasObjects
+	end
+end
+
+local function onRotate(actionName, userInputState, input)
+	if (userInputState == Enum.UserInputState.Begin) then
+		--rotation = rotation + math.pi/4
+		isRotating = true
+	elseif (userInputState == Enum.UserInputState.End) then
+		isRotating = false
+	end
+end
+
+local function onPlace(actionName, userInputState, input)
+	if (userInputState == Enum.UserInputState.Begin) then
+		local cf = placement:CalcPlacementCFrame(model, pivotPoint, rotation)
+		placement:Place(furniture[model.Name], cf, placement:isColliding(model))
+	end
+end
+
+local function onClear(actionName, userInputState, input)
+	if (userInputState == Enum.UserInputState.Begin) then
+		model.Parent = nil
+		placement:Clear()
+		model.Parent = mouse.TargetFilter
+	end
+end
+
+local function onSave(actionName, userInputState, input)
+	if (userInputState == Enum.UserInputState.Begin) then
+		placement:Save()
+	end
+end
+
+
+onSwitch(nil, Enum.UserInputState.Begin, nil)
+
+game:GetService("ContextActionService"):BindAction("switch", onSwitch, false, Enum.KeyCode.E)
+game:GetService("ContextActionService"):BindAction("rotate", onRotate, false, Enum.KeyCode.R)
+game:GetService("ContextActionService"):BindAction("place", onPlace, false, Enum.UserInputType.MouseButton1)
+game:GetService("ContextActionService"):BindAction("clear", onClear, false, Enum.KeyCode.C)
+game:GetService("ContextActionService"):BindAction("save", onSave, false, Enum.KeyCode.F)
+
+game:GetService("RunService").RenderStepped:Connect(function(dt)
+	if (indexLookup[mouse.Target] and not isRotating) then
+		placement = placements[indexLookup[mouse.Target]]
+	end
+	
+	local cf
+	if (not isRotating) then
+		cf = placement:CalcPlacementCFrame(model, mouse.Hit.p, rotation)
+		pivotPoint = cf.p
+		--rotation = 0
+		placement.GridUnit = GRID_UNIT
+	else
+		local canvasCF = placement:CalcCanvas()
+		local v = canvasCF:vectorToObjectSpace(mouse.Hit.p - pivotPoint)
+		rotation = -math.atan2(v.y, v.x)
+		placement.GridUnit = 0
+		cf = placement:CalcPlacementCFrame(model, pivotPoint, rotation)
+	end
+	
+	
+	
+	model:SetPrimaryPartCFrame(cf)
+end)

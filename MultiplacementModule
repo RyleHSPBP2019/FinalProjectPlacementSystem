@@ -1,0 +1,76 @@
+local AABB = require(game:GetService("ReplicatedStorage"):WaitForChild("AABB"))
+local PlacementClass = require(game:GetService("ReplicatedStorage"):WaitForChild("Placement"))
+local worldBoundingBox = AABB.worldBoundingBox
+
+local ZERO = Vector3.new(0, 0, 0)
+
+--
+
+local function overlap(cfA, sizeA, cfB, sizeB)
+	local rbCF = cfA:inverse() * cfB
+	local A = AABB.fromPositionSize(ZERO, sizeA)
+	local B = AABB.fromPositionSize(rbCF.p, worldBoundingBox(rbCF, sizeB))
+	
+	local union = A:Union(B)
+	local area = union and union.Max - union.Min or ZERO
+	
+	return area.x*area.y*area.z
+end
+
+--
+
+local MultiPlacement = {}
+MultiPlacement.__index = MultiPlacement
+
+function MultiPlacement.new(placements)
+	local self = setmetatable({}, MultiPlacement)
+	
+	self.Placements = placements
+	self:Init()
+	
+	return self
+end
+
+--
+
+function MultiPlacement:Init()
+	local placements = self.Placements
+	for i = 1, #placements do
+		placements[i].CalcPlacementCFrame = function(self, model, position, rotation)
+			local cf, size = self:CalcCanvas()
+			local modelSize = worldBoundingBox(CFrame.Angles(0, rotation, 0), model.PrimaryPart.Size)
+			
+			-- use AABB to make sure the model has no 2D area on other canvases
+			local sum = 0
+			for j = 1, #placements do
+				local canvasCF, canvasSize = placements[j]:CalcCanvas()
+				local volume = overlap(
+					CFrame.new(position) * (canvasCF - canvasCF.p), Vector3.new(modelSize.x, modelSize.z, 1),
+					canvasCF, Vector3.new(canvasSize.x, canvasSize.y, 1)
+				)
+				sum = sum + volume
+			end
+			
+			-- only clamp we're fully covered (margin of error included)
+			local area = modelSize.x * modelSize.z
+			local clamp = (sum < area - 0.1)
+
+			local lpos = cf:pointToObjectSpace(position);
+			local size2 = (size - Vector2.new(modelSize.x, modelSize.z))/2
+			local x = clamp and math.clamp(lpos.x, -size2.x, size2.x) or lpos.x
+			local y = clamp and math.clamp(lpos.y, -size2.y, size2.y) or lpos.y
+			
+			local g = self.GridUnit
+			if (g > 0) then
+				x = math.sign(x)*((math.abs(x) - math.abs(x) % g) + (size2.x % g))
+				y = math.sign(y)*((math.abs(y) - math.abs(y) % g) + (size2.y % g))
+			end
+			
+			return cf * CFrame.new(x, y, -modelSize.y/2) * CFrame.Angles(-math.pi/2, rotation, 0)
+		end
+	end
+end
+
+--
+
+return MultiPlacement

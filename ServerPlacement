@@ -1,0 +1,18 @@
+--local datastore = game:GetService("DataStoreService"):GetDataStore("PlacementSystem")
+
+local placementClass = require(game:GetService("ReplicatedStorage"):WaitForChild("Placement"))
+local placementObjects = {}
+
+local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
+
+
+function remotes.InitPlacement.OnServerInvoke(player, canvasPart)
+	placementObjects[player] = placementClass.new(canvasPart, game.Workspace.CanvasObjects)
+	return placementObjects[player].CanvasObjects
+end
+
+remotes.InvokePlacement.OnServerEvent:Connect(function(player, func, ...)
+	if (placementObjects[player]) then
+		placementClass[func](placementObjects[player], ...)
+	end
+end)
